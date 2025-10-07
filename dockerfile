@@ -8,7 +8,7 @@ RUN go build -o /wbl0 ./cmd
 # Run
 FROM alpine:latest
 WORKDIR /app
-COPY --from=builder /wbl0
+COPY --from=builder /wbl0 .
 COPY web ./web
 
 EXPOSE 8080
