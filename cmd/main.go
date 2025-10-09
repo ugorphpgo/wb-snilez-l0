@@ -22,9 +22,9 @@ func main() {
 
 	router := mux.NewRouter()
 
-	router.HandleFunc("/", myApp.MainHandler)
+	router.HandleFunc("/", myApp.HomeHandler)
 
-	router.HandleFunc("/api/add", myApp.InsertHandler)
+	router.HandleFunc("/api/add", myApp.HomeHandler)
 
 	log.Println("Starting server on port 8080")
 	http.ListenAndServe(":8080", router)
