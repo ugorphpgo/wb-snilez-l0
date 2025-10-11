@@ -5,70 +5,54 @@ package repository
 import (
 	"context"
 	"log"
-	"wb-snilez-l0/pkg/models"
 
 	"wb-snilez-l0/internal/cache"
+	"wb-snilez-l0/pkg/models"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const cache_capacity = 500
+const max_db_connections = 50
 
 type OrderRepo struct {
-	conn  *pgx.Conn
+	pool  *pgxpool.Pool
 	cache cache.Cache
 }
 
 func (repo *OrderRepo) InitRepo(dburl string) error {
-	ctx := context.Background()
-
-	var err error
-	repo.conn, err = pgx.Connect(ctx, dburl)
+	config, err := pgxpool.ParseConfig(dburl)
 	if err != nil {
-		log.Printf("Unable to connect to database: %s %v\n", dburl, err)
+		log.Printf("Couldn`t parse config: %v", err)
+		return err
+	}
+	config.MaxConns = max_db_connections
+	repo.pool, err = pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		log.Printf("Problem with pool making  %v\n", err)
 		return err
 	}
 
 	repo.cache = *cache.NewCache(cache_capacity)
 
-	rows, err := repo.conn.Query(context.Background(),
-		`SELECT order_uid FROM "order" LIMIT $1 `, cache_capacity)
+	orders, err := repo.GetOrders(cache_capacity)
 	if err != nil {
-		log.Printf("Problem with cache filling: %s \n", err)
-	}
-
-	var uids []string
-	for rows.Next() {
-		var uid string
-		if err = rows.Scan(&uid); err != nil {
-			log.Printf("Error while scanning ids for cache: %v", err)
-			return err
-		}
-		uids = append(uids, uid)
-	}
-	if err = rows.Err(); err != nil {
-		log.Printf("Problem with rows itertation: %v", err)
+		log.Printf("failed to init cache: %v", err)
 		return err
 	}
-
-	rows.Close()
-
-	for i := 0; i < len(uids); i++ {
-		order, found, err := repo.getFromDB(uids[i])
-		if !found {
-			log.Printf("Error while getting order - not found: %v", err)
-		} else if err != nil {
-			log.Printf("Error while getting order by id: %v", err)
-		}
-		repo.cache.Add(&order)
+	for i := 0; i < len(orders); i++ {
+		repo.cache.Add(&orders[i])
 	}
+
 	return nil
+
 }
 
-func (repo *OrderRepo) Store(ord models.Order) error {
+func (repo *OrderRepo) Store(ord *models.Order) error {
 	err := repo.saveToDB(ord)
 	if err != nil {
-		log.Printf("Failded to save to db: %v", err)
+		log.Printf("Failed to save to db: %v", err)
 		return err
 	}
 	repo.cache.Add(ord)
@@ -76,6 +60,7 @@ func (repo *OrderRepo) Store(ord models.Order) error {
 }
 
 func (repo *OrderRepo) Find(order_uid string) (order models.Order, found bool, err error) {
+	// check cache
 	cacher_order, found := repo.cache.Get(order_uid)
 	if found {
 		return *cacher_order, true, nil
@@ -85,22 +70,74 @@ func (repo *OrderRepo) Find(order_uid string) (order models.Order, found bool, e
 }
 
 func (repo *OrderRepo) GetAllRows() pgx.Rows {
-	rows, err := repo.conn.Query(context.Background(), `SELECT order_uid, track_number, entry, locale,
-	internal_signature, customer_id,delivery_service,shardkey,smid
-    date_created, oof_shard FROM "order"`)
+	/* TEST FUNCTION */
+	conn, _ := repo.pool.Acquire(context.Background())
+	defer conn.Release()
+	rows, err := conn.Query(context.Background(), `SELECT order_uid, track_number, entry, locale,
+       internal_signature, customer_id,delivery_service,shardkey, sm_id,
+       date_created, oof_shard FROM "order"`)
 	if err != nil {
-		log.Println("Problem with SELECT from order", err)
+		log.Printf("Failed to get all rows: %v", err)
 	}
 	return rows
 }
 
-func (repo *OrderRepo) saveToDB(order *models.Order) error {
-	tx, err := repo.conn.Begin(context.Background())
+func (repo *OrderRepo) GetOrders(quantity int) ([]models.Order, error) {
+	conn, err := repo.pool.Acquire(context.Background())
 	if err != nil {
-		log.Printf("Unable to begin transaction: %v\n", err)
+		log.Printf("Failed to fetch ids to to get orders: %v", err)
+		return nil, err
+	}
+	defer conn.Release()
+
+	rows, err := conn.Query(context.Background(),
+		`SELECT order_uid FROM "order" LIMIT $1`, quantity)
+	if err != nil {
+		log.Printf("Failed to fetch orders for quantity %v", err)
+	}
+	var uids []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			log.Printf("Error while scanning ids: %v", err)
+			return nil, err
+		}
+		uids = append(uids, uid)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("rows iteration error: %v", err)
+		return nil, err
+	}
+	rows.Close()
+
+	var orders []models.Order
+	for i := 0; i < len(uids); i++ {
+		order, found, err := repo.getFromDB(uids[i])
+		if !found {
+			log.Printf("order %v not found\n", uids[i])
+		} else if err != nil {
+			log.Printf("Error while searching by id: %v", err)
+		}
+		orders = append(orders, order)
+	}
+	return orders, nil
+}
+
+func (repo *OrderRepo) Close() {
+	repo.pool.Close()
+
+}
+
+func (repo *OrderRepo) saveToDB(order *models.Order) error {
+	conn, err := repo.pool.Acquire(context.Background())
+	if err != nil {
+		log.Printf("Pool connection failed: %v\n", err)
 		return err
 	}
-	defer tx.Rollback(context.Background()) // отменит изменение если не будет подтверждения транзакции
+	defer conn.Release() // Автоматически откатит если если не будет коммита
+
+	tx, err := conn.Begin(context.Background())
 	_, err = tx.Exec(context.Background(), insertIntoOrder,
 		order.OrderUID,
 		order.TrackNumber,
@@ -112,15 +149,14 @@ func (repo *OrderRepo) saveToDB(order *models.Order) error {
 		order.Shardkey,
 		order.SmID,
 		order.DateCreated,
-		order.OofShard,
-	)
+		order.OofShard)
 	if err != nil {
-		log.Printf("Unable to insert into order: %v\n", err)
+		log.Printf("Insert order failed: %v\n", err)
 		return err
 	}
 	delivery := &order.Delivery
 	_, err = tx.Exec(context.Background(), insertIntoDelivery,
-		delivery.OrderUID,
+		order.OrderUID,
 		delivery.Name,
 		delivery.Phone,
 		delivery.Zip,
@@ -130,12 +166,12 @@ func (repo *OrderRepo) saveToDB(order *models.Order) error {
 		delivery.Email,
 	)
 	if err != nil {
-		log.Printf("Unable to insert into delivery: %v\n", err)
+		log.Printf("Insert delivery failed: %v\n", err)
 		return err
 	}
 	payment := &order.Payment
 	_, err = tx.Exec(context.Background(), insertIntoPayment,
-		payment.OrderUID,
+		order.OrderUID,
 		payment.Transaction,
 		payment.RequestID,
 		payment.Currency,
@@ -147,14 +183,16 @@ func (repo *OrderRepo) saveToDB(order *models.Order) error {
 		payment.GoodsTotal,
 		payment.CustomFee,
 	)
+
 	if err != nil {
 		log.Printf("Insert payment failed: %v\n", err)
 		return err
 	}
+
 	for i := 0; i < len(order.Items); i++ {
 		item := &order.Items[i]
 		_, err = tx.Exec(context.Background(), insertIntoItem,
-			item.OrderUID,
+			order.OrderUID,
 			item.ChrtID,
 			item.TrackNumber,
 			item.Price,
@@ -168,14 +206,14 @@ func (repo *OrderRepo) saveToDB(order *models.Order) error {
 			item.Status,
 		)
 		if err != nil {
-			log.Printf("Insert item failed: %v\n", err)
+			log.Printf("Insert item failed: %v", err)
 			return err
 		}
 	}
 
 	err = tx.Commit(context.Background())
 	if err != nil {
-		log.Printf("Unable to commit transaction: %v\n", err)
+		log.Printf("Commit failed: %v\n", err)
 		return err
 	}
 	return nil
@@ -184,53 +222,63 @@ func (repo *OrderRepo) saveToDB(order *models.Order) error {
 func (repo *OrderRepo) getFromDB(order_uid string) (order models.Order, found bool, err error) {
 	ctx := context.Background()
 	found = true
-	tx, err := repo.conn.BeginTx(ctx, pgx.TxOptions{
+
+	conn, err := repo.pool.Acquire(context.Background())
+	if err != nil {
+		log.Printf("Pool connection failed: %v\n", err)
+		return
+	}
+	defer conn.Release()
+
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel: pgx.ReadCommitted,
 	})
+
 	defer tx.Rollback(ctx)
 
 	row := tx.QueryRow(ctx, `SELECT * FROM "order" WHERE order_uid = $1`, order_uid)
-
 	scanOrder(&order, row)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			found = false
 			err = nil
-			log.Printf("didn't find order with uid %v\n", order_uid)
+			log.Printf("didn't find order with id = %v\n", order_uid)
 			return
 		}
-		log.Printf("Unable to query row in orders:  %v\n", err)
+		log.Printf("Querry by id failed: %v", err)
 		return
 	}
 	row = tx.QueryRow(ctx, "SELECT * FROM delivery WHERE order_uid = $1", order_uid)
 	scanDelivery(&order, row)
 
-	if err != nil && err != pgx.ErrNoRows {
-		log.Printf("Unable to query row at delivery: %v\n", err)
+	if err != nil && err != pgx.ErrNoRows { // order without delivery is possible
+		log.Printf("Querry by id failed at delivery: %v", err)
 		return
 	}
 	row = tx.QueryRow(ctx, "SELECT * FROM payment WHERE order_uid = $1", order_uid)
 	scanPayment(&order, row)
 
-	if err != nil && err != pgx.ErrNoRows {
-		log.Printf("Unable to query row at payment: %v\n", err)
+	if err != nil && err != pgx.ErrNoRows { // order without payment is possible
+		log.Printf("Querry by id failed at payment: %v", err)
 		return
 	}
-	rows, err := tx.Query(ctx, `SELECT * FROM item WHERE order_uid = $1`, order_uid)
+
+	rows, err := tx.Query(ctx, "SELECT * FROM item WHERE order_uid = $1", order_uid)
 	if err != nil {
-		log.Printf("Unable to query row at item: %v\n", err)
+		log.Printf("Querry by id failed at items: %v", err)
 		return
 	}
 	defer rows.Close()
 	items, err := pgx.CollectRows(rows, pgx.RowToStructByName[models.Item])
 	if err != nil {
-		log.Printf("Unable to collect items: %v\n", err)
+		log.Printf("Error while collecting items: %v", err)
 		return
 	}
 	order.Items = items
 
 	return
+
 }
 
 func scanOrder(order *models.Order, row pgx.Row) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/ugorphpgo/wb-snilez-l0/pkg/models"
 
@@ -27,13 +28,13 @@ func MakeTestProducer() *TestProducer {
 	}
 }
 
-func (tp *TestProducer) ProduceRandomOrder() error {
+func (tp *TestProducer) ProduceRandomOrder() (*models.Order, error) {
 	order := models.MakeRandomOrder()
 
 	orderJSON, err := json.Marshal(order)
 	if err != nil {
 		log.Printf("Failed to marshall order: %s", err)
-		return err
+		return nil, err
 	}
 	err = tp.writer.WriteMessages(context.Background(),
 		kafka.Message{
@@ -42,9 +43,9 @@ func (tp *TestProducer) ProduceRandomOrder() error {
 	)
 	if err != nil {
 		log.Printf("Failed to produce random order: %v", err)
-		return err
+		return nil, err
 	}
-	return nil
+	return order, nil
 }
 
 func (tp *TestProducer) Close() {
@@ -52,7 +53,13 @@ func (tp *TestProducer) Close() {
 }
 
 func main() {
-	testKafka()
+	for i := 0; i < 5; i++ {
+		err := testKafka()
+		if err == nil {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
 
 	fmt.Println("Producer is up")
 
@@ -66,17 +73,17 @@ func main() {
 	})
 
 	r.HandleFunc("/producer", func(w http.ResponseWriter, r *http.Request) {
-		err := producer.ProduceRandomOrder()
+		order, err := producer.ProduceRandomOrder()
 		if err != nil {
 			fmt.Fprintf(w, "Failed to produce random order: %v", err)
 		} else {
-			fmt.Fprintf(w, "Produced random order")
+			fmt.Fprintf(w, "Successfully produced order with id: %v", order.OrderUID)
 		}
 	})
 	http.ListenAndServe(":8082", r)
 }
 
-func testKafka() {
+func testKafka() error {
 	conn, err := kafka.Dial("tcp", "localhost:9092")
 	if err != nil {
 		log.Printf("Failed to dial kafka: %s", err)
@@ -98,7 +105,10 @@ func testKafka() {
 			ReplicationFactor: 1,
 		})
 		if err != nil {
-			log.Fatalf("Failed to create topic: %s", err)
+			log.Printf("Failed to create topic: %s", err)
+			return err
 		}
+
 	}
+	return nil
 }

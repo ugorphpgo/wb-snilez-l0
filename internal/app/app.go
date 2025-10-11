@@ -1,20 +1,26 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 
 	"wb-snilez-l0/internal/repository"
 	"wb-snilez-l0/pkg/models"
 
 	"github.com/gorilla/mux"
+	"github.com/segmentio/kafka-go"
 )
 
 type App struct {
-	// conn *pgx.Conn
-	repo repository.OrderRepo
+	repo         repository.OrderRepo
+	kafka_reader *kafka.Reader
+	stop_channel chan struct{}
 }
 
 func NewApp(dburl string) (*App, error) {
@@ -24,41 +30,39 @@ func NewApp(dburl string) (*App, error) {
 		log.Printf("Failed to init repo: %v", err)
 		return nil, err
 	}
+	app.kafka_reader = kafka.NewReader(kafka.ReaderConfig{
+		Brokers: []string{dburl},
+		Topic:   "orders",
+		GroupID: "orders-consumer-group",
+	})
 
+	go app.runConsumer()
 	return app, nil
 }
 
 func (a *App) HomeHandler(w http.ResponseWriter, r *http.Request) {
-	log.Println("Opened home page")
-	w.Write([]byte("Welcome Home!\n\n"))
-	rows := a.repo.GetAllRows()
-	for rows.Next() {
-		var new_order models2.Order
+	html, err := os.ReadFile("web/templates/index.html")
+	if err != nil {
+		log.Printf("Error reading index.html: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "Error reading index.html %v", err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(html)
+	if err != nil {
+		log.Printf("Failed to get orders on homepage: %v", err)
+		return
+	}
+	orders, err := a.repo.GetOrders(amount)
+	for i := 0; i < len(orders); i++ {
+		json_data, err := json.MarshalIndent(orders[i], "", "\t")
 
-		err := rows.Scan(&new_order.OrderUID, &new_order.TrackNumber, &new_order.Entry, &new_order.Locale,
-			&new_order.InternalSignature, &new_order.CustomerID, &new_order.DeliveryService,
-			&new_order.Shardkey, &new_order.SmID, &new_order.DateCreated, &new_order.OofShard)
-		if err != nil {
-			log.Printf("Error scanning row: %v", err)
-			continue
-		}
-
-		json_data, err := json.MarshalIndent(new_order, "", "\t")
 		if err != nil {
 			log.Printf("Error making json: %v", err)
 		}
 		fmt.Fprintf(w, "%s\n", json_data)
-		// fmt.Fprintf(w, "Order UID: %s\n", orderUID)
-		// fmt.Fprintf(w, "Track Number: %s\n", trackNumber)
-		// fmt.Fprintf(w, "Entry: %s\n", entry)
-		// fmt.Fprintf(w, "Locale: %s\n", locale)
-		// fmt.Fprintf(w, "Internal Signature: %s\n", internalSignature)
-		// fmt.Fprintf(w, "Customer ID: %s\n", customerID)
-		// fmt.Fprintf(w, "Delivery Service: %s\n", deliveryService)
-		// fmt.Fprintf(w, "Shardkey: %s\n", shardkey)
-		// fmt.Fprintf(w, "SM ID: %d\n", smID)
-		// fmt.Fprintf(w, "Date Created: %s\n", dateCreated.Format(time.RFC3339))
-		// fmt.Fprintf(w, "OOF Shard: %s\n", oofShard)
 		fmt.Fprintf(w, "----------------------------------------\n")
 	}
 }
@@ -89,6 +93,46 @@ func (a *App) Insert(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func (a *App) runConsumer() {
+	log.Println("Consumer started")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		<-a.stop_channel
+		cancel()
+	}()
+
+	for {
+		m, err := a.kafka_reader.ReadMessage(ctx)
+		if err != nil {
+			//останавливаем горутинам - отменяем контекст когда закроется a.stop_channel
+			if errors.Is(err, context.Canceled) {
+				log.Println("Kafka consumer stopped")
+				return
+			}
+			log.Println("read error:", err)
+			continue
+		}
+		new_order := models.Order{}
+		err = json.Unmarshal(m.Value, &new_order)
+		if err != nil {
+			log.Printf("Error unmarshalling json: %v", err)
+			continue
+		}
+		json_text, _ := json.MarshalIndent(new_order, "", "\t")
+		log.Printf("New order:\n%s", json_text)
+
+		err = a.repo.Store(&new_order)
+		if err != nil {
+			log.Printf("Failed to store order: %v", err)
+		}
+	}
+
+}
+
 func (a *App) Close() {
-	// a.repo.conn.Close(context.Background()) //TODO
+	close(a.stop_channel)
+	a.repo.Close()
+	a.kafka_reader.Close()
 }

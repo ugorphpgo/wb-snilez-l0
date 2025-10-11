@@ -30,7 +30,7 @@ func main() {
 
 	router.HandleFunc("/", myApp.HomeHandler)
 
-	router.HandleFunc("/api/add", myApp.HomeHandler)
+	router.HandleFunc("/order/random/{count}", myApp.GetNOrders)
 
 	router.HandleFunc("/order/{oderuid}", myApp.GetById)
 
