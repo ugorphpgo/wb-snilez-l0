@@ -5,16 +5,22 @@ import (
 	"log"
 	"net/http"
 	"wb-snilez-l0/internal/app"
+	"wb-snilez-l0/internal/cfg"
 
 	"github.com/gorilla/mux"
 )
 
 func main() {
-	dbuser := "postgres"
-	dbpassword := "1234"
-	dbname := "order_db"
+	config, err := cfg.LoadConfig()
+	if err != nil {
+		log.Fatalf("Error loading config:%v ", err)
+	}
 
-	myApp, err := app.NewApp(fmt.Sprintf("postgres://%s:%s@db:5432/%s", dbuser, dbpassword, dbname))
+	myApp, err := app.NewApp(fmt.Sprintf("postgres://%s:%s@db:5432/%s",
+		config.DBUser,
+		config.DBPassword,
+		config.DBName),
+	)
 	if err != nil {
 		log.Fatal(err)
 	}
