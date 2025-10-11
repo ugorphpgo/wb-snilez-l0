@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/ugorphpgo/wb-snilez-l0/tree/main/models"
 	"log"
 	"net/http"
+
+	"github.com/ugorphpgo/wb-snilez-l0/pkg/models"
 
 	"github.com/gorilla/mux"
 	"github.com/segmentio/kafka-go"
