@@ -1,4 +1,4 @@
-module github.com/ugorphpgo/wb-snilez-l0
+module wb-snilez-l0
 
 go 1.25
 
