@@ -5,9 +5,9 @@ package repository
 import (
 	"context"
 	"log"
+	"wb-snilez-l0/pkg/models"
 
 	"wb-snilez-l0/internal/cache"
-	"wb-snilez-l0/models"
 
 	"github.com/jackc/pgx/v5"
 )

@@ -3,8 +3,7 @@ package cache
 import (
 	"container/list"
 	"sync"
-
-	"wb-snilez-l0/models"
+	"wb-snilez-l0/pkg/models"
 )
 
 type Cache struct {

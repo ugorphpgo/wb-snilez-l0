@@ -11,5 +11,5 @@ WORKDIR /app
 COPY --from=builder /wbl0 .
 COPY web ./web
 
-EXPOSE 8080
+EXPOSE 8081
 CMD ["./wbl0"]
