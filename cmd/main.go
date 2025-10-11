@@ -26,6 +26,8 @@ func main() {
 
 	router.HandleFunc("/api/add", myApp.HomeHandler)
 
+	router.HandleFunc("/order/{oderuid}", myApp.GetById)
+
 	log.Println("Starting server on port 8080")
 	http.ListenAndServe(":8080", router)
 }
