@@ -30,9 +30,9 @@ func main() {
 
 	router.HandleFunc("/", myApp.HomeHandler)
 
-	router.HandleFunc("/order/random/{count}", myApp.GetNOrders)
+	router.HandleFunc("/order/random/{count}", myApp.GetNOrders).Methods("GET")
 
-	router.HandleFunc("/order/{oderuid}", myApp.GetById)
+	router.HandleFunc("/order/{oderuid}", myApp.GetById).Methods("GET")
 
 	log.Println("Starting server on port 8080")
 	http.ListenAndServe(":8081", router)

@@ -3,9 +3,9 @@ module order_producer
 go 1.25
 
 require (
-	github.com/ugorphpgo/wb-snilez-l0 v0.0.0-20251011142553-e75ad765df10
 	github.com/gorilla/mux v1.8.1
-	github.com/segmentio/kafka-go v0.4.48
+	github.com/segmentio/kafka-go v0.4.49
+	github.com/ugorphpgo/wb-snilez-l0 v0.0.0-20251011142553-e75ad765df10
 )
 
 require (

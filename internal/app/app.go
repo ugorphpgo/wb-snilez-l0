@@ -51,14 +51,23 @@ func (a *App) HomeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write(html)
+}
+func (a *App) GetNOrders(w http.ResponseWriter, r *http.Request) {
+	count := mux.Vars(r)["count"]
+	amount, err := strconv.Atoi(count)
 	if err != nil {
-		log.Printf("Failed to get orders on homepage: %v", err)
+		log.Printf("Problem with string to int converting: %v", err)
+		fmt.Fprintf(w, "Bad Request")
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	orders, err := a.repo.GetOrders(amount)
+	if err != nil {
+		log.Printf("Error getting orders: %v", err)
+		return
+	}
 	for i := 0; i < len(orders); i++ {
 		json_data, err := json.MarshalIndent(orders[i], "", "\t")
-
 		if err != nil {
 			log.Printf("Error making json: %v", err)
 		}
