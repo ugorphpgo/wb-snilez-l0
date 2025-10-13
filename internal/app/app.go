@@ -23,20 +23,21 @@ type App struct {
 	stop_channel chan struct{}
 }
 
-func NewApp(dburl string) (*App, error) {
+func NewApp(dburl, kafkaBroker string) (*App, error) {
 	app := &App{}
-	err := app.repo.InitRepo(dburl)
-	if err != nil {
-		log.Printf("Failed to init repo: %v", err)
-		return nil, err
+
+	if err := app.repo.InitRepo(dburl); err != nil {
+		return nil, fmt.Errorf("init repo: %w", err)
 	}
+
 	app.kafka_reader = kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{dburl},
+		Brokers: []string{kafkaBroker},
 		Topic:   "orders",
 		GroupID: "orders-consumer-group",
 	})
 
 	go app.runConsumer()
+
 	return app, nil
 }
 

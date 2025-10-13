@@ -1,12 +1,22 @@
 # Build stage
 FROM golang:1.25-alpine AS builder
+
+# Устанавливаем рабочую директорию
 WORKDIR /app
-COPY scripts/kafka_producer/go.mod .
-COPY scripts/kafka_producer/go.sum .
+
+# Копируем файлы модулей
+COPY go.mod go.sum ./
+# Скачиваем зависимости
+RUN go mod download
+
+# Копируем весь исходный код (в пределах контекста сборки)
 COPY . .
 
-WORKDIR /app/scripts/kafka_producer
-RUN go build -o/kafka-producer
+# Собираем приложение УКАЖИТЕ ПРАВИЛЬНЫЙ ПУТЬ К ПАКЕТУ
+# Например, если main.go находится в ./cmd/producer:
+RUN go build -mod=vendor -o /kafka-producer ./cmd/producer
+
+
 
 # Run stage
 FROM alpine:latest

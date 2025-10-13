@@ -1,25 +1,40 @@
-package cfg
+package config
 
-import "os"
+import (
+	"fmt"
+	"os"
+)
 
 type Config struct {
-	DBPassword string
-	DBUser     string
-	DBName     string
-}
-
-func LoadConfig() (*Config, error) {
-	return &Config{
-		DBPassword: getEnv("POSTGRES_PASSWORD", "postgres"),
-		DBUser:     getEnv("POSTGRES_USER", "postgres"),
-		DBName:     getEnv("POSTGRES_DB", "postgres"),
-	}, nil
+	DBUser      string
+	DBPassword  string
+	DBHost      string
+	DBPort      string
+	DBName      string
+	KafkaBroker string
 }
 
 func getEnv(key, defaultValue string) string {
-	value, exists := os.LookupEnv(key)
-	if !exists {
-		return defaultValue
+	if val := os.Getenv(key); val != "" {
+		return val
 	}
-	return value
+	return defaultValue
+}
+
+func LoadConfig() *Config {
+	cfg := &Config{
+		DBUser:      getEnv("DB_USER", "postgres"),
+		DBPassword:  getEnv("DB_PASSWORD", "postgres"),
+		DBHost:      getEnv("DB_HOST", "localhost"),
+		DBPort:      getEnv("DB_PORT", "5432"),
+		DBName:      getEnv("DB_NAME", "postgres"),
+		KafkaBroker: getEnv("KAFKA_BROKER", "localhost:9092"),
+	}
+	return cfg
+}
+
+// DSN возвращает строку подключения для PostgreSQL
+func (c *Config) DSN() string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName)
 }

@@ -4,6 +4,7 @@ WORKDIR /app
 COPY . .
 RUN go mod download
 RUN go build -o /wbl0 ./cmd
+RUN go build -mod=vendor -o /kafka-producer
 
 # Run
 FROM alpine:latest
@@ -13,3 +14,4 @@ COPY web ./web
 
 EXPOSE 8081
 CMD ["./wbl0"]
+

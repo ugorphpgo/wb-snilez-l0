@@ -5,7 +5,7 @@ go 1.25
 require (
 	github.com/gorilla/mux v1.8.1
 	github.com/segmentio/kafka-go v0.4.49
-	github.com/ugorphpgo/wb-snilez-l0 v0.0.0-20251011142553-e75ad765df10
+	github.com/ugorphpgo/wb-snilez-l0 v0.0.0-20251012161252-eff4113a97ab
 )
 
 require (

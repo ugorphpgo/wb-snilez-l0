@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"wb-snilez-l0/internal/app"
@@ -11,18 +10,10 @@ import (
 )
 
 func main() {
-	config, err := cfg.LoadConfig()
+	cfg := config.LoadConfig()
+	myApp, err := app.NewApp(cfg.DSN(), cfg.KafkaBroker)
 	if err != nil {
-		log.Fatalf("Error loading config:%v ", err)
-	}
-
-	myApp, err := app.NewApp(fmt.Sprintf("postgres://%s:%s@db:5432/%s",
-		config.DBUser,
-		config.DBPassword,
-		config.DBName),
-	)
-	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to init app: %v", err)
 	}
 	defer myApp.Close()
 
@@ -30,10 +21,10 @@ func main() {
 
 	router.HandleFunc("/", myApp.HomeHandler)
 
-	router.HandleFunc("/order/random/{count}", myApp.GetNOrders).Methods("GET")
+	router.HandleFunc("/order/{order_uid}", myApp.GetById).Methods("GET")
 
-	router.HandleFunc("/order/{oderuid}", myApp.GetById).Methods("GET")
-
-	log.Println("Starting server on port 8080")
-	http.ListenAndServe(":8081", router)
+	log.Println("Starting server on port 8081")
+	if err := http.ListenAndServe(":8081", router); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
 }
