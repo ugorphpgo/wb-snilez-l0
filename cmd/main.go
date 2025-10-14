@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"wb-snilez-l0/internal/app"
@@ -10,21 +11,27 @@ import (
 )
 
 func main() {
-	cfg := config.LoadConfig()
-	myApp, err := app.NewApp(cfg.DSN(), cfg.KafkaBroker)
+	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("failed to init app: %v", err)
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	myApp, err := app.NewApp(fmt.Sprintf("postgres://%s:%s@db:5432/%s",
+		cfg.DBUser,
+		cfg.DBPassword,
+		cfg.DBName),
+	)
+	if err != nil {
+		log.Fatal("Failed to init")
 	}
 	defer myApp.Close()
 
-	router := mux.NewRouter()
+	r := mux.NewRouter()
 
-	router.HandleFunc("/", myApp.HomeHandler)
+	r.HandleFunc("/", myApp.HomeHandler)
+	r.HandleFunc("/order/random/{count}", myApp.GetNOrders).Methods("GET")
+	r.HandleFunc("/order/{order_uid}", myApp.GetById).Methods("GET")
 
-	router.HandleFunc("/order/{order_uid}", myApp.GetById).Methods("GET")
-
-	log.Println("Starting server on port 8081")
-	if err := http.ListenAndServe(":8081", router); err != nil {
-		log.Fatalf("server error: %v", err)
-	}
+	log.Println("Server is up")
+	http.ListenAndServe(":8081", r)
 }

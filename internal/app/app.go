@@ -23,15 +23,16 @@ type App struct {
 	stop_channel chan struct{}
 }
 
-func NewApp(dburl, kafkaBroker string) (*App, error) {
+func NewApp(dburl string) (*App, error) {
 	app := &App{}
-
-	if err := app.repo.InitRepo(dburl); err != nil {
-		return nil, fmt.Errorf("init repo: %w", err)
+	err := app.repo.InitRepo(dburl)
+	if err != nil {
+		log.Printf("Failed to init repo: %v", err)
+		return nil, err
 	}
 
 	app.kafka_reader = kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{kafkaBroker},
+		Brokers: []string{"kafka:9092"},
 		Topic:   "orders",
 		GroupID: "orders-consumer-group",
 	})

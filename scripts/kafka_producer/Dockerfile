@@ -14,7 +14,7 @@ COPY . .
 
 # Собираем приложение УКАЖИТЕ ПРАВИЛЬНЫЙ ПУТЬ К ПАКЕТУ
 # Например, если main.go находится в ./cmd/producer:
-RUN go build -mod=vendor -o /kafka-producer ./cmd/producer
+RUN go build -mod=vendor -o /kafka-producer ./scripts/kafka_producer/producer.go
 
 
 

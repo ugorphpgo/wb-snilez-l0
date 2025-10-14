@@ -2,9 +2,11 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY . .
+WORKDIR /app/wb-snilez-l0-main
+
 RUN go mod download
-RUN go build -o /wbl0 ./cmd
-RUN go build -mod=vendor -o /kafka-producer
+RUN go build -o /wbl0 ./cmd/server
+
 
 # Run
 FROM alpine:latest
@@ -13,5 +15,4 @@ COPY --from=builder /wbl0 .
 COPY web ./web
 
 EXPOSE 8081
-CMD ["./wbl0"]
-
+CMD ["/app/wbl0"]
