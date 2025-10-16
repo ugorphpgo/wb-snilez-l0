@@ -117,7 +117,7 @@ func (a *App) runConsumer() {
 	for {
 		m, err := a.kafka_reader.ReadMessage(ctx)
 		if err != nil {
-			//останавливаем горутинам - отменяем контекст когда закроется a.stop_channel
+			//останавливаем горутину - отменяем контекст когда закроется a.stop_channel
 			if errors.Is(err, context.Canceled) {
 				log.Println("Kafka consumer stopped")
 				return
