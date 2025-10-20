@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 	"wb-snilez-l0/internal/app"
-	"wb-snilez-l0/internal/cfg"
+	"wb-snilez-l0/internal/config"
 
 	"github.com/gorilla/mux"
 )

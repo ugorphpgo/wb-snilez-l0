@@ -2,148 +2,118 @@ package app
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"strconv"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"wb-snilez-l0/internal/repository"
-	"wb-snilez-l0/pkg/models"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 
-	"github.com/gorilla/mux"
-	"github.com/segmentio/kafka-go"
+	"wb-snilez-l0/internal/cache"
+	"wb-snilez-l0/internal/config"
+	h "wb-snilez-l0/internal/http"
+	kc "wb-snilez-l0/internal/kafka"
+	"wb-snilez-l0/internal/log"
+	"wb-snilez-l0/internal/model"
+	"wb-snilez-l0/internal/repo"
+	"wb-snilez-l0/internal/service"
 )
 
 type App struct {
-	repo         repository.OrderRepo
-	kafka_reader *kafka.Reader
-	stop_channel chan struct{}
+	log  *zap.Logger
+	cfg  *config.Config
+	db   *pgxpool.Pool
+	svc  *service.Service
+	kc   *kc.Consumer
+	http *http.Server
 }
 
-func NewApp(dburl string) (*App, error) {
-	app := &App{}
-	err := app.repo.InitRepo(dburl)
+func New() (*App, error) {
+	logger, err := log.New()
 	if err != nil {
-		log.Printf("Failed to init repo: %v", err)
+		return nil, err
+	}
+	cfg, err := config.Load()
+	if err != nil {
 		return nil, err
 	}
 
-	app.kafka_reader = kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{"kafka:9092"},
-		Topic:   "orders",
-		GroupID: "orders-consumer-group",
-	})
-
-	go app.runConsumer()
-
-	return app, nil
-}
-
-func (a *App) HomeHandler(w http.ResponseWriter, r *http.Request) {
-	html, err := os.ReadFile("web/templates/index.html")
-	if err != nil {
-		log.Printf("Error reading index.html: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprint(w, "Error reading index.html %v", err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write(html)
-}
-func (a *App) GetNOrders(w http.ResponseWriter, r *http.Request) {
-	count := mux.Vars(r)["count"]
-	amount, err := strconv.Atoi(count)
-	if err != nil {
-		log.Printf("Problem with string to int converting: %v", err)
-		fmt.Fprintf(w, "Bad Request")
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	orders, err := a.repo.GetOrders(amount)
-	if err != nil {
-		log.Printf("Error getting orders: %v", err)
-		return
-	}
-	for i := 0; i < len(orders); i++ {
-		json_data, err := json.MarshalIndent(orders[i], "", "\t")
-		if err != nil {
-			log.Printf("Error making json: %v", err)
-		}
-		fmt.Fprintf(w, "%s\n", json_data)
-		fmt.Fprintf(w, "----------------------------------------\n")
-	}
-}
-
-func (a *App) GetById(w http.ResponseWriter, r *http.Request) {
-	order_uid := mux.Vars(r)["order_uid"]
-	order, found, err := a.repo.Find(order_uid)
-	if !found {
-		fmt.Fprintf(w, "order %v not found\n", order_uid)
-		return
-	} else if err != nil {
-		fmt.Fprintf(w, "internal error\n")
-		log.Printf("Error while searching by id: %v", err)
-		return
-	}
-	json_data, err := json.MarshalIndent(order, "", "\t")
-	if err != nil {
-		log.Printf("Error making json: %v", err)
-	}
-	fmt.Fprintf(w, "%s\n", json_data)
-
-}
-
-func (a *App) Insert(w http.ResponseWriter, r *http.Request) {
-	log.Println("Opened insert page")
-
-	a.repo.Store(models.MakeRandomOrder())
-
-}
-
-func (a *App) runConsumer() {
-	log.Println("Consumer started")
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	go func() {
-		<-a.stop_channel
-		cancel()
-	}()
-
-	for {
-		m, err := a.kafka_reader.ReadMessage(ctx)
-		if err != nil {
-			//останавливаем горутину - отменяем контекст когда закроется a.stop_channel
-			if errors.Is(err, context.Canceled) {
-				log.Println("Kafka consumer stopped")
-				return
-			}
-			log.Println("read error:", err)
-			continue
-		}
-		new_order := models.Order{}
-		err = json.Unmarshal(m.Value, &new_order)
-		if err != nil {
-			log.Printf("Error unmarshalling json: %v", err)
-			continue
-		}
-		json_text, _ := json.MarshalIndent(new_order, "", "\t")
-		log.Printf("New order:\n%s", json_text)
-
-		err = a.repo.Store(&new_order)
-		if err != nil {
-			log.Printf("Failed to store order: %v", err)
-		}
+	pcfg, err := pgxpool.ParseConfig(cfg.DB.DSN)
+	if err != nil {
+		return nil, err
+	}
+	pcfg.MaxConns = int32(cfg.DB.MaxOpenConns)
+	db, err := pgxpool.NewWithConfig(ctx, pcfg)
+	if err != nil {
+		return nil, err
 	}
 
+	if err := repo.RunMigrations(cfg.DB.DSN, true); err != nil {
+		logger.Error("migrations up error", zap.Error(err))
+		return nil, err
+	}
+
+	r := repo.New(db)
+	lru := cache.NewLRU[string, *model.Order](cfg.Cache.Capacity, cfg.Cache.TTL)
+	svc := service.New(r, lru)
+
+	_ = svc.Warmup(ctx, cfg.Cache.Capacity)
+
+	mux := http.NewServeMux()
+	hd := h.NewHandler(svc, logger)
+	mux.HandleFunc("GET /order/", hd.GetOrder)
+	if cfg.UI.Enable {
+		fs := http.FileServer(http.Dir(cfg.UI.StaticDir))
+		mux.Handle("/", fs)
+	}
+
+	srv := &http.Server{
+		Addr:         cfg.Server.Addr,
+		Handler:      mux,
+		ReadTimeout:  cfg.Server.ReadTimeout,
+		WriteTimeout: cfg.Server.WriteTimeout,
+		IdleTimeout:  cfg.Server.IdleTimeout,
+	}
+
+	k := kc.New(kc.Config{
+		Brokers:        cfg.Kafka.Brokers,
+		Topic:          cfg.Kafka.Topic,
+		GroupID:        cfg.Kafka.GroupID,
+		MinBytes:       cfg.Kafka.MinBytes,
+		MaxBytes:       cfg.Kafka.MaxBytes,
+		CommitInterval: cfg.Kafka.CommitInterval,
+	}, svc, logger)
+
+	return &App{log: logger, cfg: cfg, db: db, svc: svc, kc: k, http: srv}, nil
 }
 
-func (a *App) Close() {
-	close(a.stop_channel)
-	a.repo.Close()
-	a.kafka_reader.Close()
+func (a *App) Run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		a.log.Info("http listen", zap.String("addr", a.cfg.Server.Addr))
+		if err := a.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			a.log.Fatal("http server", zap.Error(err))
+		}
+	}()
+
+	go func() {
+		a.log.Info("kafka consumer started")
+		if err := a.kc.Run(ctx); err != nil {
+			a.log.Error("kafka run", zap.Error(err))
+		}
+	}()
+
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = a.http.Shutdown(shutdownCtx)
+	a.db.Close()
+	a.log.Sync()
+	return nil
 }

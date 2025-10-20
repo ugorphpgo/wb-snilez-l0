@@ -3,59 +3,91 @@ package cache
 import (
 	"container/list"
 	"sync"
-	"wb-snilez-l0/pkg/models"
+	"time"
 )
 
-type Cache struct {
-	/*
-		Кэш с LRU политикой вытеснения
-		Элементы лежат в List
-		Map для поиска за O(1)
-		Когда элемент используется он перемещается в начало списка
-		Когда нужно вытеснить элемент, вытесняется последний в списке
-	*/
-
-	capacity  int
-	cacheMap  map[string]*list.Element
-	cacheList *list.List
-	mutex     sync.Mutex
+type entry[K comparable, V any] struct {
+	key       K
+	value     V
+	expiresAt time.Time
 }
 
-func NewCache(capacity int) *Cache {
-	return &Cache{
-		capacity:  capacity,
-		cacheMap:  make(map[string]*list.Element),
-		cacheList: list.New(),
+type LRU[K comparable, V any] struct {
+	mu       sync.RWMutex
+	capacity int
+	ttl      time.Duration
+	ll       *list.List
+	table    map[K]*list.Element
+}
+
+func NewLRU[K comparable, V any](capacity int, ttl time.Duration) *LRU[K, V] {
+	if capacity <= 0 {
+		capacity = 1
+	}
+	return &LRU[K, V]{
+		capacity: capacity,
+		ttl:      ttl,
+		ll:       list.New(),
+		table:    make(map[K]*list.Element, capacity),
 	}
 }
 
-func (c *Cache) Get(order_uid string) (order *models.Order, found bool) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	element, found := c.cacheMap[order_uid]
-
-	if !found {
-		return nil, false
+func (c *LRU[K, V]) Get(key K) (V, bool) {
+	c.mu.RLock()
+	elem, ok := c.table[key]
+	if !ok {
+		c.mu.RUnlock()
+		var zero V
+		return zero, false
 	}
-	c.cacheList.MoveToFront(element)
-	return element.Value.(*models.Order), true
+	ent := elem.Value.(entry[K, V])
+	if time.Now().After(ent.expiresAt) {
+		c.mu.RUnlock()
+		c.Delete(key)
+		var zero V
+		return zero, false
+	}
+	c.mu.RUnlock()
+	c.mu.Lock()
+	c.ll.MoveToFront(elem)
+	c.mu.Unlock()
+	return ent.value, true
 }
 
-func (c *Cache) Add(order *models.Order) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+func (c *LRU[K, V]) Set(key K, value V) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-	if element, found := c.cacheMap[order.OrderUID]; found {
-		element.Value = order
-		c.cacheList.MoveToFront(element)
+	if elem, ok := c.table[key]; ok {
+		elem.Value = entry[K, V]{key: key, value: value, expiresAt: time.Now().Add(c.ttl)}
+		c.ll.MoveToFront(elem)
 		return
 	}
 
-	c.cacheList.PushFront(order)
-	c.cacheMap[order.OrderUID] = c.cacheList.Front()
-	if c.cacheList.Len() > c.capacity {
-		delete(c.cacheMap, c.cacheList.Back().Value.(*models.Order).OrderUID)
-		c.cacheList.Remove(c.cacheList.Back())
+	elem := c.ll.PushFront(entry[K, V]{key: key, value: value, expiresAt: time.Now().Add(c.ttl)})
+	c.table[key] = elem
+
+	if c.ll.Len() > c.capacity {
+		oldest := c.ll.Back()
+		if oldest != nil {
+			ent := oldest.Value.(entry[K, V])
+			delete(c.table, ent.key)
+			c.ll.Remove(oldest)
+		}
 	}
+}
+
+func (c *LRU[K, V]) Delete(key K) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if elem, ok := c.table[key]; ok {
+		delete(c.table, key)
+		c.ll.Remove(elem)
+	}
+}
+
+func (c *LRU[K, V]) Len() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ll.Len()
 }
