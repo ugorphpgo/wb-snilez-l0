@@ -48,7 +48,7 @@ services:
     depends_on: [kafka]
 
 
-  ordersvc:
+  wbservice:
     build: .
     depends_on:
       postgres:
