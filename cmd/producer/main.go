@@ -75,7 +75,7 @@ func createRandomOrder() map[string]any {
 			"phone":   fmt.Sprintf("+%d", 1000000000+rand.Intn(9000000000)),
 			"zip":     fmt.Sprintf("%d", 100000+rand.Intn(900000)),
 			"city":    cities[rand.Intn(len(cities))],
-			"address": fmt.Sprintf("Street %d, Building %d", rand.Intn(100)+1, rand.Intn(20)+1),
+			"address": fmt.Sprintf("Улица %d, Дом %d", rand.Intn(100)+1, rand.Intn(20)+1),
 			"region":  regions[rand.Intn(len(regions))],
 			"email":   emails[rand.Intn(len(emails))],
 		},
