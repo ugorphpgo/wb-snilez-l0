@@ -4,7 +4,6 @@ go 1.25
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.18.3
-	github.com/gorilla/mux v1.7.4
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/segmentio/kafka-go v0.4.48
 	github.com/spf13/viper v1.20.1
